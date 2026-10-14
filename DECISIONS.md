@@ -1,7 +1,7 @@
 # DECISIONS.md
 
-1. **Indexes.** `employees.emp_code` unique (business key, duplicate guard, sort); `employees(department, joined_on)` for headcount. `attendance_logs(emp_code, date)` unique: it guarantees one record per day, and serves monthly, trend and PATCH. `attendance_logs(date desc, emp_code)` serves the default list order and month scans. I rejected an index on `status`: only five values, so it barely narrows anything.
-2. **Punch-in race.** Both requests compute the same record and call `insert_one`. The unique `(emp_code, date)` index lets MongoDB accept exactly one. The other gets `DuplicateKeyError`, which I return as 409. No check-then-insert.
-3. **Ties.** `$rank` gives tied people the same rank and skips the next one. `limit` filters on `rank <= limit`, so everyone tied at the cutoff is returned, even if that is more than `limit` rows.
-4. **Headcount.** The summary starts from `employees` (joined on or before month end) and uses `$lookup` into the logs. Each person counts once, with zero logs giving zero totals.
-5. **At 100x.** I would pre-aggregate monthly numbers per employee, updated on each write, so analytics stop scanning raw records.
+1. **Indexes.** I created four. A unique index on `employees.emp_code` stops duplicate employees. `employees(department, joined_on)` helps the headcount lookups. A unique `attendance_logs(emp_code, date)` allows only one record per person per day, and speeds up the monthly, trend and PATCH queries. `attendance_logs(date desc, emp_code)` matches the default list order. I decided against indexing `status`, because it has only five values.
+2. **Punch-in race.** When two identical punch-ins arrive together, both build the record and call `insert_one`. The unique `(emp_code, date)` index lets MongoDB accept only one. The other request fails with `DuplicateKeyError`, and I return 409. The first gets 201.
+3. **Ties.** The leaderboard uses `$rank`, so tied people share a rank and the next rank is skipped. I filter on `rank <= limit`, so everyone tied at the cutoff is returned, and the list can be longer than `limit`.
+4. **Headcount.** The department summary starts from the `employees` collection, using people who joined on or before the month end. It then uses `$lookup` to attach their logs, so someone with no logs is still counted once, with zero totals.
+5. **At 100x.** I would store monthly totals per employee and update them whenever a record changes, so analytics read a small summary instead of scanning every attendance record.
